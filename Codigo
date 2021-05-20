@@ -1,0 +1,160 @@
+//C++ code
+//Ian Raziel Recoba Diaz
+#include <SoftwareSerial.h>
+
+int bluePin = 4;
+int redPin = 7;
+
+// Ligado diretamente ao pino tx do exp8266
+const byte rxPin = 2;
+// Ligado ao pino rx do esp8266(usar resistor para diminuir a voltagem)
+const byte txPin = 3;
+
+SoftwareSerial esp8266(rxPin, txPin);
+
+void setup() {
+
+  Serial.begin(115200);
+  while (!Serial) {
+    ; // Espera a conexão com a porta serial. Necessário somente para porta USB nativa
+  }
+
+  esp8266.begin(115200);
+  while(!esp8266) {
+    ; //Espera a conexão com o módulo esp8266
+  }
+
+  pinMode(redPin,OUTPUT);
+  pinMode(bluePin,OUTPUT);
+  
+  digitalWrite(redPin, HIGH);
+  delay(1000);
+  digitalWrite(redPin, LOW);
+  delay(1000);
+  digitalWrite(bluePin, HIGH);
+  delay(1000);
+  digitalWrite(bluePin, LOW);
+  delay(1000);
+
+  Serial.println("Serial and ESP8266 communication started!");
+  delay(1000);
+
+  //Comando de teste
+  //String result = sendCommand("AT\r\n", 1000);
+  //Serial.println(result);
+
+  //Reinicia o módulo
+  String result = sendCommand("AT+RST\r\n", 2000);
+  Serial.println(result);
+
+  //Configura como access point
+  //1.station; 2.access point 3.access point + station
+  result = sendCommand("AT+CWMODE=1\r\n", 1000);
+  Serial.println(result);
+
+  result = sendCommand("AT+CWJAP=\"ssid\",\"password\"", 3000);
+  Serial.println(result);
+
+  //Recupera o endereço IP - 192.168.4.1
+  result = sendCommand("AT+CIFSR\r\n", 1000);
+  Serial.println(result);
+  
+  //Configura para aceitar múltiplas conexões
+  //0.Single connection 1.Multiple connections(Max 4)
+  result = sendCommand("AT+CIPMUX=1\r\n", 2000);
+  Serial.println(result);
+
+  //Configura o servidor na porta 80
+  //0. deleta o servidor 1.cria um servidor
+  result = sendCommand("AT+CIPSERVER=1,80\r\n", 2000);
+  Serial.println(result);
+
+  //Recupera o endereço IP - 192.168.4.1
+  result = sendCommand("AT+CIFSR\r\n", 1000);
+  Serial.println(result);
+}
+
+void loop() {
+  if(esp8266.available()) {
+    
+    if(esp8266.find("+IPD,")){
+      delay(1000);
+      
+      //Subtrai 48 devido a função read() retornar o valor decimal ASCII e 0(o primeiro 
+      //número decimal) inicia no 48
+      int connectionId = esp8266.read()-48;
+
+      esp8266.find("pin=");
+      int pinNumber = (esp8266.read()-48);
+
+      digitalWrite(pinNumber, !digitalRead(pinNumber));
+
+      //Serial.print("Pin number: ");
+      //Serial.println(pinNumber);
+
+      String content;
+      if(pinNumber == bluePin){
+        content += "blue led on pinNumber ";
+      } else {
+        content += "red led on pinNumber ";
+      }
+      content += pinNumber;
+      content += ": ";
+
+      if(digitalRead(pinNumber)){
+        content+= "ON";
+      }else{
+        content+= "OFF";
+      }
+
+      sendHttpResponse(connectionId, content);
+      
+      String closeCommand = "AT+CIPCLOSE=";
+      closeCommand+=connectionId;
+      closeCommand+="\r\n";
+      
+      String result = sendCommand(closeCommand, 1000);
+      //Serial.println(result);
+    }
+  }
+}
+
+String sendCommand(String command, const int timeout){
+  delay(timeout);
+
+  esp8266.print(command);
+  
+  String response = "";
+  long int time = millis();
+  
+  while((time + timeout) > millis()){
+    while(esp8266.available()){
+        char c = esp8266.read();
+        response += c;  
+    }
+  }
+  return response;
+}
+
+void sendHttpResponse(int connectionId, String data){
+  String httpResponse;
+  String httpHeader;
+
+  httpHeader = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n";
+  httpHeader += "Content-Length: ";
+  httpHeader += data.length();
+  httpHeader += "Access-Control-Allow-Origin: *";
+  httpHeader += "\r\n";
+  httpHeader +="Connection: close\r\n\r\n";
+
+  //O último caractere de "content" não está sendo enviado, por isto do espaço extra
+  httpResponse = httpHeader + data + " ";
+
+  String cipSend = "AT+CIPSEND=";
+  cipSend += connectionId;
+  cipSend += ",";
+  cipSend +=data.length();
+  cipSend +="\r\n";
+  sendCommand(cipSend,1000);
+  sendCommand(data,1000);
+}
